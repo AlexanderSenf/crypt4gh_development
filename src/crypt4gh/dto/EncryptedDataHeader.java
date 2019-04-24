@@ -31,22 +31,26 @@ import java.security.InvalidKeyException;
  * 
  * Experimental version, incorporating block ranges for Crypt4GH data blocks
  */
-public class EncryptedHeader implements Serializable {
+public class EncryptedDataHeader implements Serializable {
+    
+    public static int getLen() {
+        return 36; // encryptionMethod (4) + key (32)
+    }
+    public static int getEncryptedLen() {
+        return 68; // nonce + header + MAC
+    }
     
     // Checksum appended to data, at the end of the file
     // 0 = Chacha20-ietf-Poly1305 (Default & only choice; 32 bytes)
     private int encryptionMethod = 0;
     private byte[] key = null;
-    // Do data blocks have ranges prepended?
-    // 0 = no (default) 1 = yes
-    private int blockRange = 0;
     
     /*
      * Constructors
      *
      * To add: Check validity of input parameters
      */
-    public EncryptedHeader(int encryptionMethod, byte[] key) {
+    public EncryptedDataHeader(int encryptionMethod, byte[] key) {
         this.encryptionMethod = encryptionMethod;
         switch (encryptionMethod) {
             case 0:
@@ -54,9 +58,8 @@ public class EncryptedHeader implements Serializable {
                 System.arraycopy(key, 0, this.key, 0, 32);
                 break;
         }
-        this.blockRange = 0;
     }
-    public EncryptedHeader(int encryptionMethod, byte[] key, int blockRange) {
+    public EncryptedDataHeader(int encryptionMethod, byte[] key, int blockRange) {
         this.encryptionMethod = encryptionMethod;
         switch (encryptionMethod) {
             case 0:
@@ -64,7 +67,6 @@ public class EncryptedHeader implements Serializable {
                 System.arraycopy(key, 0, this.key, 0, 32);
                 break;
         }
-        this.blockRange = blockRange;
     }
 
     private byte[] getBytes() {
@@ -87,15 +89,13 @@ public class EncryptedHeader implements Serializable {
         System.arraycopy(intToLittleEndian(this.encryptionMethod), 0, concat, position, 4);
         position += 4;
         System.arraycopy(this.key, 0, concat, position, keyLength);
-        position += keyLength;
-        System.arraycopy(intToLittleEndian(this.blockRange), 0, concat, position, 4);
         
         // Byte array complete
         return concat;
     }
     
     // Expects: Encrypted ByteBuffer --> Automatic Decryption
-    public EncryptedHeader(byte[] encryptedBytes, byte[] sharedKey, boolean encrypted) throws InvalidKeyException, GeneralSecurityException {
+    public EncryptedDataHeader(byte[] encryptedBytes, byte[] sharedKey, boolean encrypted) throws InvalidKeyException, GeneralSecurityException {
 
         // Register Tink
         TinkConfig.register();
@@ -116,10 +116,6 @@ public class EncryptedHeader implements Serializable {
         this.key = new byte[32];
         System.arraycopy(plaintext, position, this.key, 0, 32);
         position += 32;
-        
-        byte[] eR = new byte[4];
-        System.arraycopy(plaintext, position, eR, 0, 4);
-        this.blockRange = getLittleEndian(eR);
     }
     
     // Encrypt header with public key, return as byte array
@@ -144,10 +140,6 @@ public class EncryptedHeader implements Serializable {
     
     public byte[] getKey() {
         return this.key;
-    }
-    
-    public int getBlockRange() {
-        return this.blockRange;
     }
     
     /*
