@@ -37,7 +37,7 @@ public class Crypt4ghInputStream extends InputStream {
         // Instantiate Input Stream - if this is a Crypt4gh Input Stream
         // Read unencrypted file Header (validates Magic Number & Version)
         UnencryptedHeader unencryptedHeader = getUnencryptedHeader(in);
-        int encryptedHeaderLength = unencryptedHeader.getEncryptedHeaderLength() - 16;
+    //    int encryptedHeaderLength = unencryptedHeader.getEncryptedHeaderLength() - 16;
         
         // Read unencrypted file Header (decryptes this header with Private GPG Key)
 //        EncryptedHeader encryptedHeader = getEncryptedHeader(in, Paths.get(keyPath), keyPassphrase, encryptedHeaderLength);

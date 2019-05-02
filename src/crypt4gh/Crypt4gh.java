@@ -24,10 +24,11 @@ import static com.google.crypto.tink.subtle.X25519.generatePrivateKey;
 import static com.google.crypto.tink.subtle.X25519.publicFromPrivate;
 import com.rfksystems.blake2b.Blake2b;
 import com.rfksystems.blake2b.security.Blake2bProvider;
-import crypt4gh.dto.EditEntry;
-
-import crypt4gh.dto.EncryptedDataHeader;
-import crypt4gh.dto.EncryptedEditList;
+import crypt4gh.dto.DataKeyContent;
+import crypt4gh.dto.DataPacket;
+import crypt4gh.dto.EditListContent;
+import crypt4gh.dto.Header;
+import crypt4gh.dto.HeaderPacket;
 import crypt4gh.dto.PrivateKey;
 import crypt4gh.dto.UnencryptedHeader;
 import crypt4gh.util.Glue;
@@ -43,6 +44,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.io.PrintWriter;
+import java.io.PushbackInputStream;
 import java.io.UnsupportedEncodingException;
 
 import java.nio.ByteBuffer;
@@ -58,9 +60,10 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.security.NoSuchProviderException;
 import java.security.Security;
-import java.security.spec.AlgorithmParameterSpec;
 import java.security.spec.InvalidKeySpecException;
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.List;
 
 import java.util.logging.Level;
 import java.util.logging.Logger;
@@ -115,7 +118,6 @@ public class Crypt4gh {
         options.addOption("gkp", "genkeypass", true, "encrypt private key with this passphrase");
 
         options.addOption("t", "testme", false, "test the operations of the algorithm");
-        options.addOption("tk", "testmekey", false, "test the operations of the algorithm");
 
         options.addOption("debug", "debug", false, "print debug information during encryption/decryption");
         boolean debug = false;
@@ -131,10 +133,6 @@ public class Crypt4gh {
             
             if (cmd.hasOption("t")) {
                 testMe(debug);
-                System.exit(1);                
-            }
-            if (cmd.hasOption("tk")) {
-                testMeKey();
                 System.exit(1);                
             }
             
@@ -212,8 +210,7 @@ public class Crypt4gh {
                 byte[] key = Glue.getInstance().GenerateRandomString(24, 48, 7, 7, 7, 3);
                 int encryptionType = 0;        
 
-                //encrypt(inputPath, outputFilePath, encryptionType, key, privateKey, publicKey, debug);
-                encryptSubranges(inputPath, outputFilePath, encryptionType, key, privateKey, publicKey, debug);
+                encrypt(inputPath, outputFilePath, encryptionType, key, privateKey, publicKey, debug);
             } else if (cmd.hasOption("d")) { // decrypt
                 decrypt(inputPath, outputFilePath, privateKey, publicKey, debug);
             } // ***************************************************************
@@ -253,47 +250,44 @@ public class Crypt4gh {
         OutputStream os = Files.newOutputStream(destination);
         if (debug) System.out.println("Writing output to: " + destination);
 
-        // Generate Unencrypted Header
-        byte[] ownPublicKey = publicFromPrivate(privateKey);
-        
-        // Generate Curve25519 Shared Secret Key
-        byte[] sharedKey_forBlake2b = getSharedKey(privateKey, publicKey);
-        byte[] sharedKey = Blake2B_512(sharedKey_forBlake2b, publicKey, ownPublicKey, debug );
-        Base64 b = new Base64();
-        if (debug) {
-            System.out.println("Own Private Key:\t" + Hex.encode(privateKey) + "\t" + b.encodeToString(privateKey));
-            System.out.println("Own Public Key:\t" + Hex.encode(X25519.publicFromPrivate(privateKey)) + "\t" + b.encodeToString(X25519.publicFromPrivate(privateKey)));
-            System.out.println("Target Public Key:\t" + Hex.encode(publicKey) + "\t" + b.encodeToString(publicKey));
-            System.out.println("Pre Shared Key:\t" + Hex.encode(sharedKey_forBlake2b) + "\t" + b.encodeAsString(sharedKey_forBlake2b));            
-            System.out.println("Shared Key:\t" + Hex.encode(sharedKey) + "\t" + b.encodeToString(sharedKey));
-        }
-        
         // Data Key: Id not specified, auto-generate a private key on the spot
         // [Or generate s shared key between two randomly generated keys]
         if ((dataKey == null) || (dataKey.length!=32)) {
             dataKey =  X25519.generatePrivateKey();
         }
+        Base64 b = new Base64();
         if (debug) System.out.println("Data Key:\t" + Hex.encode(dataKey) + "\t" + b.encodeToString(dataKey));
+
+        List<HeaderPacket> headerPackets = new ArrayList<>(); 
+
+        // Generate DataKeyHeader
+        DataKeyContent dataKeyContent = new DataKeyContent(0, 0, dataKey);
+        // Generate Header Packet for target user 
+        HeaderPacket keyPacket = new HeaderPacket(0, privateKey, publicKey, dataKeyContent);        
+        headerPackets.add(keyPacket);
         
-        // Generate Encrypted Header and nonce and MAC
-        //EncryptedHeader encryptedHeader = new EncryptedHeader(new byte[0], dataKey.getBytes());
-        EncryptedDataHeader encryptedHeader = new EncryptedDataHeader(encryptionType,
-                                                              dataKey);
-        byte[] encryptedHeaderBytes = encryptedHeader.getEncryptedHeader(sharedKey);
+        // Edit List -- None here
+        // TEST [remove] *******************************************************
+        long[] editList = {20L, 10L};
+        EditListContent editListContent = new EditListContent(editList);
+        // Generate Header Packet for target user 
+        HeaderPacket editPacket = new HeaderPacket(0, privateKey, publicKey, editListContent);        
+        headerPackets.add(editPacket);
+        // TEST [remove] *******************************************************
         
-        // Get Remaining Length 
-        int remainingLength = encryptedHeaderBytes.length + 4 + ownPublicKey.length;
+        // Construct unencrypted Header
+        UnencryptedHeader unencryptedHeader = new UnencryptedHeader(Crypt4gh.MagicNumber,
+                                                                    Crypt4gh.Version,
+                                                                    headerPackets.size());
         
-        // Generate Header object
-        UnencryptedHeader unencryptedHeader = new UnencryptedHeader(MagicNumber, 
-                                                                    Version,
-                                                                    remainingLength,
-                                                                    0,
-                                                                    ownPublicKey);
+        // Construct full Header
+        Header header = new Header(unencryptedHeader, headerPackets);
+        byte[] fullHeaderBytes = header.getBytes();
         
-        // Write Header
-        os.write(unencryptedHeader.getHeaderBytes());
-        os.write(encryptedHeaderBytes);
+        /*
+         * Header is now constructed! Can write it to output stream
+         */
+        os.write(fullHeaderBytes);
         
         //
         // Header is written. Write actual file data
@@ -302,13 +296,9 @@ public class Crypt4gh {
         // Get Input Stream
         InputStream in = Files.newInputStream(source);
         
-        // Crypt
-        TinkConfig.register();
-        ChaCha20Poly1305 cipher = new ChaCha20Poly1305(dataKey);
-        
         // Encrypt - in 64KiB segments
         byte[] segment = new byte[65535];
-
+        
         /*
          * Main Encryption Loop: Process data in 64K blocks, handle Checksum
          */
@@ -321,7 +311,7 @@ public class Crypt4gh {
             seg_len = in.read(segment);
             
             // Encrypt
-            byte[] encrypted = cipher.encrypt(to_enc, new byte[0]);
+            byte[] encrypted = (new DataPacket(to_enc, dataKey)).getBytes();
             if (debug) {
                 byte[] nonce = Arrays.copyOfRange(encrypted, 0, 12);
                 System.out.println("Segment Nonce 1:\t" + Hex.encode(nonce) + "\t" + b.encodeToString(nonce));
@@ -335,127 +325,7 @@ public class Crypt4gh {
         os.flush();
         os.close();
     }
-    private static void encryptSubranges(Path source, 
-                                Path destination, 
-                                int encryptionType,
-                                byte[] dataKey,
-                                byte[] privateKey, // My Private
-                                byte[] publicKey,  // Other Public
-                                boolean debug) throws IOException, 
-                                                      NoSuchAlgorithmException, 
-                                                      NoSuchPaddingException, 
-                                                      InvalidKeyException, 
-                                                      InvalidAlgorithmParameterException, 
-                                                      GeneralSecurityException,        
-                                                      Exception  {        
-        // Buffer Output to complete header
-        ByteArrayOutputStream baos = new ByteArrayOutputStream();
-        
-        // Establish Output Stream
-        OutputStream os = Files.newOutputStream(destination);
-        if (debug) System.out.println("Writing output to: " + destination);
 
-        // Generate Unencrypted Header
-        byte[] ownPublicKey = publicFromPrivate(privateKey);
-        
-        // Generate Curve25519 Shared Secret Key
-        byte[] sharedKey_forBlake2b = getSharedKey(privateKey, publicKey);
-        byte[] sharedKey = Blake2B_512(sharedKey_forBlake2b, publicKey, ownPublicKey, debug );
-        Base64 b = new Base64();
-        if (debug) {
-            System.out.println("Own Private Key:\t" + Hex.encode(privateKey) + "\t" + b.encodeToString(privateKey));
-            System.out.println("Own Public Key:\t" + Hex.encode(X25519.publicFromPrivate(privateKey)) + "\t" + b.encodeToString(X25519.publicFromPrivate(privateKey)));
-            System.out.println("Target Public Key:\t" + Hex.encode(publicKey) + "\t" + b.encodeToString(publicKey));
-            System.out.println("Pre Shared Key:\t" + Hex.encode(sharedKey_forBlake2b) + "\t" + b.encodeAsString(sharedKey_forBlake2b));            
-            System.out.println("Shared Key:\t" + Hex.encode(sharedKey) + "\t" + b.encodeToString(sharedKey));
-        }
-        
-        // Data Key: Id not specified, auto-generate a private key on the spot
-        // [Or generate s shared key between two randomly generated keys]
-        if ((dataKey == null) || (dataKey.length!=32)) {
-            dataKey =  X25519.generatePrivateKey();
-        }
-        if (debug) System.out.println("Data Key:\t" + Hex.encode(dataKey) + "\t" + b.encodeToString(dataKey));
-        
-        // Generate Encrypted Header and nonce and MAC
-        //EncryptedHeader encryptedHeader = new EncryptedHeader(new byte[0], dataKey.getBytes());
-        EncryptedDataHeader encryptedHeader = new EncryptedDataHeader(encryptionType,
-                                                              dataKey,
-                                                              1);
-        byte[] encryptedHeaderBytes = encryptedHeader.getEncryptedHeader(sharedKey);
-        
-        // Add range header entry
-        EncryptedEditList editList = new EncryptedEditList();
-
-        //
-        // Header is NOT YET written. Write actual file data
-        //
-        
-        // Get Input Stream
-        InputStream in = Files.newInputStream(source);
-        
-        // Crypt
-        TinkConfig.register();
-        ChaCha20Poly1305 cipher = new ChaCha20Poly1305(dataKey);
-        
-        // Encrypt - in 64KiB segments
-        byte[] segment = new byte[65535];
-
-        /*
-         * Main Encryption Loop: Process data in 64K blocks, handle Checksum
-         */
-        int seg_len = in.read(segment);
-        while (seg_len > 0) {
-            // Prepare data to be encrypted
-            byte[] to_enc = Arrays.copyOf(segment, seg_len);
-
-            // Get next data segment
-            seg_len = in.read(segment);
-            
-            // Encrypt
-            byte[] encrypted = cipher.encrypt(to_enc, new byte[0]);
-            
-            byte[] segmentNonce = new byte[12];
-            System.arraycopy(encrypted, 0, segmentNonce, 0, 12);
-            EditEntry oneEntry = new EditEntry(segmentNonce, 10, 30);
-            editList.addEntry(oneEntry);
-            if (debug) {
-                System.out.println("Segment Nonce 2:\t" + Hex.encode(segmentNonce) + "\t" + b.encodeToString(segmentNonce));
-            } 
-            
-            // Write data to output stream
-            baos.write(encrypted);
-        }
-        
-        // Get bytes for edit list
-        byte[] encryptedEditList = editList.getEncryptedBytes(sharedKey);
-        
-        // Get Remaining Length 
-        int remainingLength = (encryptedHeaderBytes.length + encryptedEditList.length) + 4 + ownPublicKey.length;
-        if (debug) {
-            System.out.println("Data Header: " + encryptedHeaderBytes.length + ", Edit List: " + encryptedEditList.length);
-        }
-        
-        // Generate Header object
-        UnencryptedHeader unencryptedHeader = new UnencryptedHeader(MagicNumber, 
-                                                                    Version,
-                                                                    remainingLength,
-                                                                    0,
-                                                                    ownPublicKey);
-        
-        // Write Header
-        os.write(unencryptedHeader.getHeaderBytes());
-        os.write(encryptedHeaderBytes);
-        os.write(encryptedEditList);
-
-        // Write buffered Data
-        os.write(baos.toByteArray());
-        
-        in.close();
-        
-        os.flush();
-        os.close();
-    }
     private static byte[] intToLittleEndian(long numero) {
             ByteBuffer bb = ByteBuffer.allocate(4);
             bb.order(ByteOrder.LITTLE_ENDIAN);
@@ -482,62 +352,34 @@ public class Crypt4gh {
         if (debug) System.out.println("Input Path: " + source);
         
         // Read unencrypted file Header (validates Magic Number & Version)
-        UnencryptedHeader unencryptedHeader = getUnencryptedHeader(in);
-        int encryptedHeaderLength = unencryptedHeader.getEncryptedHeaderLength() - 4 - 32; // OK
+        Header header = getHeader(in);
+                
+        // Get Data Key
+        byte[] dataKey = header.getDataKey(privateKey);
         
-        // Obtain public key from header, unless specified
-        if (publicKey==null) {
-            publicKey = unencryptedHeader.getPublicKeyBytes();
+        // Get Edit List (if one is there)
+        boolean skip = false, range = false;
+        int editIndex = 0;
+        long[] editList = header.getEditList(privateKey);
+        if (editList != null && editList.length > 0) {
+            range = true;
+            skip = true;
+        }
+        
+        // Decrypt Data
+        // Public Key - specified in File
+        if (publicKey == null) {
+            publicKey = header.getSourcePublicKey();
         }
         Base64 b = new Base64();
         if (debug) System.out.println("Encrypter Public Key:\t" + Hex.encode(publicKey) + "\t" + b.encodeAsString(publicKey));
         
-        // Generate Curve25519 Shared Secret Key
-        byte[] sharedKey_forBlake2b = getSharedKey(privateKey, publicKey);
-        //byte[] sharedKey = Blake2B_512(sharedKey_forBlake2b, publicKey, X25519.publicFromPrivate(privateKey) );
-        byte[] sharedKey = Blake2B_512(sharedKey_forBlake2b, X25519.publicFromPrivate(privateKey), publicKey, debug );
-        if (debug) {
-            System.out.println("My Private Key:\t" + Hex.encode(privateKey) + "\t" + b.encodeAsString(privateKey));
-            System.out.println("My Public Key:\t" + Hex.encode(X25519.publicFromPrivate(privateKey)) + "\t" + b.encodeToString(X25519.publicFromPrivate(privateKey)));
-            System.out.println("Other Public Key:\t" + Hex.encode(publicKey) + "\t" + b.encodeToString(publicKey));
-            System.out.println("Pre Shared Key:\t" + Hex.encode(sharedKey_forBlake2b) + "\t" + b.encodeAsString(sharedKey_forBlake2b));            
-            System.out.println("Shared Key:\t" + Hex.encode(sharedKey) + "\t" + b.encodeAsString(sharedKey));            
-        }
-        
-        // Get and Decrypt Data Header
-        int dataHeaderLength = EncryptedDataHeader.getEncryptedLen();
-        byte[] encryptedDataBytes = new byte[dataHeaderLength]; //encryptedHeaderLength];
-        int read = in.read(encryptedDataBytes);
-        
-        // Read unencrypted file Header (decryptes this header with Private GPG Key)
-        EncryptedDataHeader encryptedDataHeader = new EncryptedDataHeader(encryptedDataBytes, sharedKey, true);
-        if (debug) {
-            System.out.println("Data Header decrypted successfully.");
-        }
-        
-        // Get and Decrypt Edit List, if Present
-        EncryptedEditList editList = null; 
-        int editListLength = encryptedHeaderLength - EncryptedDataHeader.getEncryptedLen();
-        if (debug) {
-            System.out.println("Edit List Length: " + editListLength);
-        }
-        if (editListLength > 0) {
-            byte[] encryptedEditBytes = new byte[editListLength];
-            read = in.read(encryptedEditBytes);
-            
-            editList = new EncryptedEditList(encryptedEditBytes, sharedKey);
-        }
-        
-        if (debug) {
-            System.out.println("Edit List Specified?:\t" + (editList!=null));
-            editList.printKeys();
-        }        
         //  Create Output Stream
         OutputStream out = Files.newOutputStream(destination);
+        if (debug) System.out.println("Output Path: " + destination);
  
         // Crypt
         TinkConfig.register();
-        byte[] dataKey = encryptedDataHeader.getKey();
         ChaCha20Poly1305 cipher = new ChaCha20Poly1305(dataKey);
         
         // Decrypt Loop
@@ -545,26 +387,9 @@ public class Crypt4gh {
         int segmentSize = 65535 + 12 + 16;
         byte[] segment = new byte[segmentSize]; // 64KiB + nonce (12) + mac (16) [ + range (8)]
         
-        int start = 0, end = 65535;
         int seg_len = in.read(segment);
         while (seg_len > 0) {
-            byte[] segmentNonce = new byte[12];
-            System.arraycopy(segment, 0, segmentNonce, 0, 12);
-
-            if (editList!=null && editList.containsKey(segmentNonce)) {
-                if (debug) {
-                    System.out.println(" --- Segment nonce found");
-                }
-                start = editList.getEntry(segmentNonce).getRangeStart();
-                end = editList.getEntry(segmentNonce).getRangeEnd();
-            }
-            if (debug) {
-                System.out.println("Block Range: " + start + "-" + end);
-            }
             byte[] sub_seg = Arrays.copyOfRange(segment, 0, seg_len); // -rangeDelta
-            if (debug) {
-                System.out.println("Segment Nonce 3:\t" + Hex.encode(segmentNonce) + "\t" + b.encodeToString(segmentNonce));
-            }
             
             // Get next segment
             seg_len = in.read(segment);
@@ -572,17 +397,55 @@ public class Crypt4gh {
             // Decrypt data
             byte[] decrypted = cipher.decrypt(sub_seg, new byte[0]); // should be 64KiB
 
-            // Range
-            if (end > decrypted.length) {
-                end = decrypted.length;
-                if (debug)
-                    System.out.println("\tAdjusted Range End: " + end);
+            // Process Range Bytes
+            byte[] decrypted_range = null;
+            int position = 0;
+            while (position < decrypted.length) {
+                if (range) { // respect range instruction
+                    int remain = decrypted.length - position;
+                    if (skip) { // 'Skip' mode: ignore specified number of bytes (or until the end)
+                        if (editIndex >= editList.length) { // past last range
+                            position += remain;
+                            remain = 0;
+                            decrypted_range = null;
+                        } else if (editList[editIndex] > remain) { // ignore current content
+                            editList[editIndex] = editList[editIndex] - remain;
+                            decrypted_range = null;
+                        } else {
+                            position += editList[editIndex];                           
+                            remain = (int) (remain - editList[editIndex]);
+                            editList[editIndex] = 0;
+                            skip = false;
+                            editIndex++;
+                            decrypted_range = null;
+                        }
+                    } else { // 'use' mode: Use specified number of bytes (or until the end)
+                        if (editIndex >= editList.length) { // past last range
+                            decrypted_range = Arrays.copyOfRange(decrypted, position, (position + remain));
+                            position += remain;
+                            remain = 0;                            
+                        } else if (editList[editIndex] > remain) {
+                            decrypted_range = Arrays.copyOfRange(decrypted, position, (position + remain));
+                            position += remain;
+                        } else {
+                            decrypted_range = Arrays.copyOfRange(decrypted, position, (position + (int) editList[editIndex]) );
+                            remain = (int) (remain - editList[editIndex]);
+                            editList[editIndex] = 0;
+                            skip = true;
+                            editIndex++;
+                        }
+                    }
+                } else { // use everything
+                    decrypted_range = decrypted;
+                }
+                
+                if (decrypted_range != null)
+                    out.write(decrypted_range);
+                
             }
-            int range = end-start;
-            byte[] decrypted_valid = Arrays.copyOfRange(decrypted, start, range);
             
             // Write decryted data to output stream
-            out.write(decrypted_valid);
+    //        out.write(decrypted_range);
         }
          
         // Done: Close Streams
@@ -617,6 +480,41 @@ public class Crypt4gh {
         return unencryptedHeader;
     }
         
+    // Extract Header Structure from 
+    private static Header getHeader(InputStream in) throws IOException {
+        
+        // Get unencrypted Header.
+        byte[] startUnencrypted = new byte[UnencryptedHeader.UNENCRYPTEDHEADERLENGTH];
+        in.read(startUnencrypted);
+        UnencryptedHeader unencrytedHeader = new UnencryptedHeader(startUnencrypted);
+        
+        // Allow Peeking
+        PushbackInputStream pbis = new PushbackInputStream(in, 4);
+        
+        // Loop Through Header Packets
+        List<HeaderPacket> headerPackets = new ArrayList<>();
+        for (int i=0; i<unencrytedHeader.getHeaderPacketCount(); i++) {
+            // Determine Packet Length
+            byte[] packetLengthBytes = new byte[4];
+            pbis.read(packetLengthBytes);
+            int packetLength = getLittleEndian(packetLengthBytes);
+            pbis.unread(packetLengthBytes);
+            
+            // Read Packet
+            byte[] onePacketBytes = new byte[packetLength];
+            pbis.read(onePacketBytes);
+            
+            HeaderPacket oneHeaderPacket = new HeaderPacket(onePacketBytes);
+            headerPackets.add(oneHeaderPacket);
+        }
+        
+        // Build Header
+        Header header = new Header(unencrytedHeader, headerPackets);
+        
+        return header;
+    }
+    
+    
     private static byte[] getKey(char[] password) {
         SecretKey secret = Glue.getInstance().getKey(password, 256);
         return secret.getEncoded();
@@ -799,44 +697,6 @@ public class Crypt4gh {
         System.out.println();
         
         
-    }
-/*
-    private static void testMeKey() throws UnsupportedEncodingException  {
-        String key = "YzRnaC12MQAGYmNyeXB0ABQAAABk5vVvOnQKWJ/jpnQ3aRy3lwARY2hhY2hhMjBfcG9seTEzMDUAPHob63Kmmnf0vI0TYCSGpMIaNEKeEMcqVxb6ZfeDI3737OroVRS0FWh2GyvngMCEq7AGqp2UlT/oCp0sRQ==";
-        
-        Base64 decoder = new Base64();
-        byte[] decode = decoder.decode(key); //.substring(20));
-        PrivateKey pk = new PrivateKey(decode, "");
-
-        System.out.println();
-    }
-*/
-    private static void testMeKey() throws UnsupportedEncodingException  {
-        String a = "P+kXQCq57aGiJ7qDJTdZxx94xZrlt3EjglXbv8Dm5o8="; // my private
-        String b = "Xy8yxfdzDZx1t81PHApVVeF6aoToiRB8BDnf2oWiURk=";
-//        String b = "VrgNY5ElJg4iXzNoQ3RgloD8AtFZBT0dPevQ+zVt3HY="; // recipient public
-        
-        //String a = "pw3/NpM8YmJcpttrPsVYFNnyBmTT6ydErPx3tz7zB60="; // my private
-        //String b = "K4oDnIgI+soyYTqYTXvnqP3Yb/JrGgNEF5Ok7JXfpxg="; // recipient public
-        
-        Base64 c = new Base64();
-        try {
-            byte[] shared = getSharedKey(c.decode(a), c.decode(b));
-            
-            String d = c.encodeAsString(shared);
-            System.out.println(d);
-            
-        } catch (InvalidKeyException ex) {
-            Logger.getLogger(Crypt4gh.class.getName()).log(Level.SEVERE, null, ex);
-        }
-        
-        String key = "YzRnaC12MQAGYmNyeXB0ABQAAABk5vVvOnQKWJ/jpnQ3aRy3lwARY2hhY2hhMjBfcG9seTEzMDUAPHob63Kmmnf0vI0TYCSGpMIaNEKeEMcqVxb6ZfeDI3737OroVRS0FWh2GyvngMCEq7AGqp2UlT/oCp0sRQ==";
-        
-        Base64 decoder = new Base64();
-        byte[] decode = decoder.decode(key); //.substring(20));
-        PrivateKey pk = new PrivateKey(decode, "");
-
-        System.out.println();
     }
     
     private static byte[] decrypt(byte[] cipherText, String encryptionKey, byte[] IV) throws Exception {
