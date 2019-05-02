@@ -268,11 +268,11 @@ public class Crypt4gh {
         
         // Edit List -- None here
         // TEST [remove] *******************************************************
-        long[] editList = {20L, 10L};
-        EditListContent editListContent = new EditListContent(editList);
+//        long[] editList = {20L, 10L};
+//        EditListContent editListContent = new EditListContent(editList);
         // Generate Header Packet for target user 
-        HeaderPacket editPacket = new HeaderPacket(0, privateKey, publicKey, editListContent);        
-        headerPackets.add(editPacket);
+//        HeaderPacket editPacket = new HeaderPacket(0, privateKey, publicKey, editListContent);        
+//        headerPackets.add(editPacket);
         // TEST [remove] *******************************************************
         
         // Construct unencrypted Header
@@ -437,6 +437,7 @@ public class Crypt4gh {
                     }
                 } else { // use everything
                     decrypted_range = decrypted;
+                    position = decrypted.length;
                 }
                 
                 if (decrypted_range != null)
