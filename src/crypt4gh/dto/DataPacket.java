@@ -25,7 +25,7 @@ import java.security.GeneralSecurityException;
  */
 public class DataPacket {
 
-    int DATAPACKETLENGTH = 12 + 65535 + 16;
+    int DATAPACKETLENGTH = 12 + 65536 + 16;
     
     byte[] encryptedBytes;
     

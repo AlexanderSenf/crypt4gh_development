@@ -297,7 +297,7 @@ public class Crypt4gh {
         InputStream in = Files.newInputStream(source);
         
         // Encrypt - in 64KiB segments
-        byte[] segment = new byte[65535];
+        byte[] segment = new byte[65536];
         
         /*
          * Main Encryption Loop: Process data in 64K blocks, handle Checksum
@@ -384,7 +384,7 @@ public class Crypt4gh {
         
         // Decrypt Loop
         // Encrypt - in 64KiB segments
-        int segmentSize = 65535 + 12 + 16;
+        int segmentSize = 65536 + 12 + 16;
         byte[] segment = new byte[segmentSize]; // 64KiB + nonce (12) + mac (16) [ + range (8)]
         
         int seg_len = in.read(segment);
