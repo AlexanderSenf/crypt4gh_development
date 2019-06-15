@@ -353,6 +353,9 @@ public class Crypt4gh {
         
         // Read unencrypted file Header (validates Magic Number & Version)
         Header header = getHeader(in);
+        if (debug) {
+            System.out.println("data key: " + Hex.encode(header.getDataKey(privateKey)));
+        }
                 
         // Get Data Key
         byte[] dataKey = header.getDataKey(privateKey);
@@ -393,6 +396,17 @@ public class Crypt4gh {
             
             // Get next segment
             seg_len = in.read(segment);
+            
+            if (debug) {
+                System.out.println("seg len: " + seg_len);
+                byte[] iv_ = new byte[12];
+                System.arraycopy(sub_seg, 0, iv_, 0, 12);
+                System.out.println("iv: " + Hex.encode(iv_));
+                byte[] mac_ = new byte[16];
+                System.arraycopy(sub_seg, 65547, mac_, 0, 16);
+                System.out.println("mac: " + Hex.encode(mac_));
+            }
+            
 
             // Decrypt data
             byte[] decrypted = cipher.decrypt(sub_seg, new byte[0]); // should be 64KiB
@@ -483,10 +497,12 @@ public class Crypt4gh {
         
     // Extract Header Structure from 
     private static Header getHeader(InputStream in) throws IOException {
+        //int x = 0;
         
         // Get unencrypted Header.
         byte[] startUnencrypted = new byte[UnencryptedHeader.UNENCRYPTEDHEADERLENGTH];
         in.read(startUnencrypted);
+        //x += UnencryptedHeader.UNENCRYPTEDHEADERLENGTH;
         UnencryptedHeader unencrytedHeader = new UnencryptedHeader(startUnencrypted);
         
         // Allow Peeking
@@ -504,10 +520,14 @@ public class Crypt4gh {
             // Read Packet
             byte[] onePacketBytes = new byte[packetLength];
             pbis.read(onePacketBytes);
+            //x += packetLength;
             
             HeaderPacket oneHeaderPacket = new HeaderPacket(onePacketBytes);
             headerPackets.add(oneHeaderPacket);
         }
+        //if (true) {
+        //    System.out.println("Header: " + x + " bytes");
+        //}
         
         // Build Header
         Header header = new Header(unencrytedHeader, headerPackets);
