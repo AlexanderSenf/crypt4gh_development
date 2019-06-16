@@ -70,6 +70,12 @@
     nbproject/build-impl.xml file. 
 
     -->
+    <target name="copy-dependencies">
+        <copy todir="dist/lib/">
+            <fileset dir="lib/" includes="**/*.jar" excludes="**/*sources.jar, **/*javadoc.jar" />
+        </copy>
+    </target>
+    
     <target name="package-for-store" depends="jar">
 
         <!-- Change the value of this property to be the name of your JAR,

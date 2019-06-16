@@ -4,7 +4,7 @@ Download: git clone https://github.com/AlexanderSenf/crypt4gh_development.git
 
 cd crypt4gh_development
 
-Build: ant package-for-store
+Build: ant jar copy-dependencies package-for-store
 
 There are two key pairs included, for testing "john" and "plain" (poth are private/public key pairs.
 
